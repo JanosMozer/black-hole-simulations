@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.21)
 project(BlackHoleSim)
 
+#find_package(OpenMP)
+#if(OpenMP_FOUND)
+#    message(STATUS "OpenMP found, enabling parallelization for CPU fallback.")
+#endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -22,6 +27,9 @@ target_compile_options(BlackHole2D PRIVATE -Wno-deprecated-declarations)
 # 3D Black Hole executable
 add_executable(BlackHole3D black_hole.cpp)
 target_link_libraries(BlackHole3D PRIVATE ${DEPS})
+#if(OpenMP_FOUND)
+#    target_link_libraries(BlackHole3D PRIVATE OpenMP::OpenMP_CXX)
+#endif()
 target_include_directories(BlackHole3D PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Simple Lensing executable (OpenGL 4.1 compatible)
