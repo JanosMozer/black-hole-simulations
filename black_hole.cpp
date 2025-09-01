@@ -148,6 +148,155 @@ vector<ObjectData> objects = {
     //{ vec4(6e10f, 0.0f, 0.0f, 5e10f), vec4(0,1,0,1) }
 };
 
+void raytraceCPU(vector<unsigned char>& pixels, int W, int H, const Camera& cam, const vector<ObjectData>& objs);
+
+struct Ray;
+void rk4Step(Ray& ray, double dλ, double rs);
+
+// -- Physics functions ported from CPU-geodesic.cpp -- //
+struct Ray {
+    // cartesian coords
+    double x, y, z;
+    // spherical coords
+    double r, theta, phi;
+    double dr, dtheta, dphi;
+    double E, L; // conserved quantities
+
+    Ray(vec3 pos, vec3 dir, double rs) : x(pos.x), y(pos.y), z(pos.z) {
+        // Convert to spherical coordinates
+        r = sqrt(x*x + y*y + z*z);
+        theta = acos(z / r);
+        phi = atan2(y, x);
+
+        // Seed velocities
+        double dx = dir.x, dy = dir.y, dz = dir.z;
+        dr     = sin(theta)*cos(phi)*dx + sin(theta)*sin(phi)*dy + cos(theta)*dz;
+        dtheta = (cos(theta)*cos(phi)*dx + cos(theta)*sin(phi)*dy - sin(theta)*dz) / r;
+        dphi   = (-sin(phi)*dx + cos(phi)*dy) / (r * sin(theta));
+
+        // Store conserved quantities
+        L = r * r * sin(theta) * dphi;
+        double f = 1.0 - rs / r;
+        if (f > 0) {
+            double dt_dλ = sqrt((dr*dr)/f + r*r*dtheta*dtheta + r*r*sin(theta)*sin(theta)*dphi*dphi);
+            E = f * dt_dλ;
+        } else {
+            E = 0;
+        }
+    }
+
+    void step(double dλ, double rs) {
+        if (r <= rs) return;
+        rk4Step(*this, dλ, rs);
+        // convert back to cartesian
+        x = r * sin(theta) * cos(phi);
+        y = r * sin(theta) * sin(phi);
+        z = r * cos(theta);
+    }
+};
+
+void geodesicRHS(const Ray& ray, double rhs[6], double rs) {
+    double r = ray.r, theta = ray.theta, dr = ray.dr, dtheta = ray.dtheta, dphi = ray.dphi, E = ray.E;
+    double f = 1.0 - rs / r;
+    double dt_dlambda = (f > 0) ? E / f : 0;
+
+    // First derivatives
+    rhs[0] = dr;
+    rhs[1] = dtheta;
+    rhs[2] = dphi;
+    // Second derivatives
+    rhs[3] = - (rs / (2 * r * r)) * f * dt_dlambda * dt_dlambda + (rs / (2 * r * r * f)) * dr * dr + r * (dtheta * dtheta + sin(theta) * sin(theta) * dphi * dphi);
+    rhs[4] = - (2.0 / r) * dr * dtheta + sin(theta) * cos(theta) * dphi * dphi;
+    rhs[5] = - (2.0 / r) * dr * dphi - 2.0 * cos(theta) / sin(theta) * dtheta * dphi;
+}
+
+void addState(const double a[6], const double b[6], double factor, double out[6]) {
+    for (int i = 0; i < 6; i++) out[i] = a[i] + b[i] * factor;
+}
+
+void rk4Step(Ray& ray, double dλ, double rs) {
+    double y0[6] = { ray.r, ray.theta, ray.phi, ray.dr, ray.dtheta, ray.dphi };
+    double k1[6], k2[6], k3[6], k4[6], temp[6];
+
+    geodesicRHS(ray, k1, rs);
+    addState(y0, k1, dλ/2.0, temp);
+    Ray r2 = ray; r2.r=temp[0]; r2.theta=temp[1]; r2.phi=temp[2]; r2.dr=temp[3]; r2.dtheta=temp[4]; r2.dphi=temp[5];
+    geodesicRHS(r2, k2, rs);
+
+    addState(y0, k2, dλ/2.0, temp);
+    Ray r3 = ray; r3.r=temp[0]; r3.theta=temp[1]; r3.phi=temp[2]; r3.dr=temp[3]; r3.dtheta=temp[4]; r3.dphi=temp[5];
+    geodesicRHS(r3, k3, rs);
+
+    addState(y0, k3, dλ, temp);
+    Ray r4 = ray; r4.r=temp[0]; r4.theta=temp[1]; r4.phi=temp[2]; r4.dr=temp[3]; r4.dtheta=temp[4]; r4.dphi=temp[5];
+    geodesicRHS(r4, k4, rs);
+
+    ray.r      += (dλ/6.0)*(k1[0] + 2*k2[0] + 2*k3[0] + k4[0]);
+    ray.theta  += (dλ/6.0)*(k1[1] + 2*k2[1] + 2*k3[1] + k4[1]);
+    ray.phi    += (dλ/6.0)*(k1[2] + 2*k2[2] + 2*k3[2] + k4[2]);
+    ray.dr     += (dλ/6.0)*(k1[3] + 2*k2[3] + 2*k3[3] + k4[3]);
+    ray.dtheta += (dλ/6.0)*(k1[4] + 2*k2[4] + 2*k3[4] + k4[4]);
+    ray.dphi   += (dλ/6.0)*(k1[5] + 2*k2[5] + 2*k3[5] + k4[5]);
+}
+
+void raytraceCPU(vector<unsigned char>& pixels, int W, int H, const Camera& cam, const vector<ObjectData>& objs) {
+    pixels.resize(W * H * 3);
+
+    // build camera basis
+    vec3 forward = normalize(cam.target - cam.position());
+    vec3 right   = normalize(cross(forward, vec3(0,1,0)));
+    vec3 up      = cross(right, forward);
+    float aspect = float(W) / float(H);
+    float tanHalfFov = tan(radians(60.0f) * 0.5f);
+
+    ObjectData blackHole;
+    for(const auto& obj : objs) {
+        if(obj.mass > 1.98892e30 * 100) {
+            blackHole = obj;
+            break;
+        }
+    }
+    double rs = 2.0 * G * blackHole.mass / (c * c);
+
+    #pragma omp parallel for schedule(dynamic, 4)
+    for(int y = 0; y < H; ++y) {
+        for(int x = 0; x < W; ++x) {
+            float u = (2.0f * (x + 0.5f) / float(W)  - 1.0f) * aspect * tanHalfFov;
+            float v = (1.0f - 2.0f * (y + 0.5f) / float(H)) * tanHalfFov;
+            vec3 dir = normalize(u*right + v*up + forward);
+
+            Ray ray(cam.position(), dir, rs);
+
+            const int MAX_STEPS = 1000;
+            const double D_LAMBDA = 5e8;
+            const double ESCAPE_R = 6e12;
+
+            vec4 color(0.0f, 0.0f, 0.05, 1.0); // Background color
+            
+            for(int i = 0; i < MAX_STEPS; ++i) {
+                ray.step(D_LAMBDA, rs);
+                vec3 rayPos(ray.x, ray.y, ray.z);
+
+                for(const auto& obj : objs) {
+                    if (distance(rayPos, vec3(obj.posRadius)) <= obj.posRadius.w) {
+                        color = obj.color;
+                        goto pixel_done;
+                    }
+                }
+
+                if (ray.r > ESCAPE_R) break;
+            }
+            pixel_done:;
+
+            int idx = (y * W + x) * 3;
+            pixels[idx+0] = (unsigned char)(color.r * 255);
+            pixels[idx+1] = (unsigned char)(color.g * 255);
+            pixels[idx+2] = (unsigned char)(color.b * 255);
+        }
+    }
+}
+
+
 struct Engine {
     GLuint gridShaderProgram;
     // -- Quad & Texture render -- //
@@ -909,10 +1058,17 @@ int main() {
             engine.dispatchCompute(camera);
             engine.drawFullScreenQuad();
         } else {
-            // Fallback 3D rendering
-            engine.generateGrid(objects);
-            engine.drawGrid(viewProj);
-            engine.drawObjects(viewProj, objects);
+            // Fallback CPU ray tracing
+            int texWidth = 400;
+            int texHeight = 300;
+            static vector<unsigned char> pixels(texWidth * texHeight * 3);
+            
+            raytraceCPU(pixels, texWidth, texHeight, camera, objects);
+
+            glBindTexture(GL_TEXTURE_2D, engine.texture);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texWidth, texHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+            
+            engine.drawFullScreenQuad();
         }
         
         // Gravity

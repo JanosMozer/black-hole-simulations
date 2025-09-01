@@ -17,7 +17,7 @@ This project provides C++ simulations of gravitational lensing and black hole vi
 
 This project has known compatibility issues on macOS systems. The primary 3D visualization relies on OpenGL compute shaders, which require **OpenGL 4.3** or higher. macOS officially supports up to **OpenGL 4.1**.
 
-Due to this limitation, the project will automatically use a fallback 3D rendering mode on Mac systems. This fallback mode provides an interactive 3D view of the warped spacetime grid and celestial objects but does not include the advanced ray-traced gravitational lensing effects.
+Due to this limitation, the project will automatically use a fallback 3D rendering mode on Mac systems. This fallback uses a CPU-based ray tracer to accurately simulate the gravitational lensing effect. However, because this is computationally intensive and does not use the GPU, the rendering resolution has been lowered to maintain usable performance. Even with this adjustment, the simulation was quite slow during testing on a MacBook, so the 3D visualization may not be 100% fluid or accurate.
 
 ## Dependencies
 
