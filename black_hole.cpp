@@ -178,7 +178,7 @@ struct Engine {
             cerr << "GLFW init failed\n";
             exit(EXIT_FAILURE);
         }
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         window = glfwCreateWindow(WIDTH, HEIGHT, "Black Hole", nullptr, nullptr);
@@ -201,7 +201,7 @@ struct Engine {
         this->shaderProgram = CreateShaderProgram();
         gridShaderProgram = CreateShaderProgram("grid.vert", "grid.frag");
 
-        // computeProgram = CreateComputeProgram("geodesic.comp"); // Disabled for OpenGL 3.3 compatibility
+        computeProgram = CreateComputeProgram("geodesic.comp");
         glGenBuffers(1, &cameraUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
         glBufferData(GL_UNIFORM_BUFFER, 128, nullptr, GL_DYNAMIC_DRAW); // alloc ~128 bytes
@@ -462,29 +462,37 @@ struct Engine {
         return prog;
     }
     void dispatchCompute(const Camera& cam) {
-        // Simplified version without compute shaders for OpenGL 3.3 compatibility
-        // Just update the texture with a simple pattern for now
+        // determine target compute‐res
         int cw = cam.moving ? COMPUTE_WIDTH  : 200;
         int ch = cam.moving ? COMPUTE_HEIGHT : 150;
 
-        // Create a simple texture pattern
-        std::vector<unsigned char> pixels(cw * ch * 4);
-        for (int i = 0; i < cw * ch; ++i) {
-            int x = i % cw;
-            int y = i / cw;
-            
-            // Create a simple gradient pattern
-            float u = (float)x / cw;
-            float v = (float)y / ch;
-            
-            pixels[i * 4 + 0] = (unsigned char)(u * 255);     // R
-            pixels[i * 4 + 1] = (unsigned char)(v * 255);     // G
-            pixels[i * 4 + 2] = (unsigned char)(128);         // B
-            pixels[i * 4 + 3] = 255;                          // A
-        }
-
+        // 1) reallocate the texture if needed
         glBindTexture(GL_TEXTURE_2D, texture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, cw, ch, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        glTexImage2D(GL_TEXTURE_2D,
+                    0,                // mip
+                    GL_RGBA8,         // internal format
+                    cw,               // width
+                    ch,               // height
+                    0, GL_RGBA, 
+                    GL_UNSIGNED_BYTE, 
+                    nullptr);
+
+        // 2) bind compute program & UBOs
+        glUseProgram(computeProgram);
+        uploadCameraUBO(cam);
+        uploadDiskUBO();
+        uploadObjectsUBO(objects);
+
+        // 3) bind it as image unit 0
+        glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+
+        // 4) dispatch grid
+        GLuint groupsX = (GLuint)std::ceil(cw / 16.0f);
+        GLuint groupsY = (GLuint)std::ceil(ch / 16.0f);
+        glDispatchCompute(groupsX, groupsY, 1);
+
+        // 5) sync
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
     }
     void uploadCameraUBO(const Camera& cam) {
         struct UBOData {
@@ -601,17 +609,6 @@ struct Engine {
         glfwSwapBuffers(window);
         glfwPollEvents();
     };
-    
-    void drawFullScreenQuad() {
-        glUseProgram(shaderProgram);
-        glBindVertexArray(quadVAO);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, texture);
-        glUniform1i(glGetUniformLocation(shaderProgram, "screenTexture"), 0);
-        glDisable(GL_DEPTH_TEST);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-        glEnable(GL_DEPTH_TEST);
-    }
 };
 Engine engine;
 void setupCameraCallbacks(GLFWwindow* window) {
@@ -641,10 +638,6 @@ void setupCameraCallbacks(GLFWwindow* window) {
 
 // -- MAIN -- //
 int main() {
-    cout << "Starting 3D Black Hole Simulation..." << endl;
-    cout << "OpenGL Version: " << glGetString(GL_VERSION) << endl;
-    cout << "GLSL Version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << endl;
-    
     setupCameraCallbacks(engine.window);
     vector<unsigned char> pixels(engine.WIDTH * engine.HEIGHT * 3);
 
@@ -697,7 +690,7 @@ int main() {
         engine.generateGrid(objects);
         // 5) overlay the bent grid
         mat4 view = lookAt(camera.position(), camera.target, vec3(0,1,0));
-        mat4 proj = perspective(radians(60.0f), float(engine.WIDTH)/engine.HEIGHT, 1e9f, 1e14f);
+        mat4 proj = perspective(radians(60.0f), float(engine.COMPUTE_WIDTH)/engine.COMPUTE_HEIGHT, 1e9f, 1e14f);
         mat4 viewProj = proj * view;
         engine.drawGrid(viewProj);
 
