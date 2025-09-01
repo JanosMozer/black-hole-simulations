@@ -156,6 +156,8 @@ struct Engine {
     GLuint texture;
     GLuint shaderProgram;
     GLuint computeProgram = 0;
+    GLuint objectShaderProgram = 0;
+
     // -- UBOs -- //
     GLuint cameraUBO = 0;
     GLuint diskUBO = 0;
@@ -165,6 +167,8 @@ struct Engine {
     GLuint gridVBO = 0;
     GLuint gridEBO = 0;
     int gridIndexCount = 0;
+    int sphereIndexCount = 0;
+    GLuint sphereVAO = 0;
 
     int WIDTH = 800;  // Window width
     int HEIGHT = 600; // Window height
@@ -174,57 +178,124 @@ struct Engine {
     float height = 75000000000.0f; // Height of the viewport in meters
     
     Engine() {
+        cout << "[INFO] Initializing Black Hole Engine..." << endl;
+        
         if (!glfwInit()) {
-            cerr << "GLFW init failed\n";
+            cerr << "[ERROR] GLFW init failed" << endl;
             exit(EXIT_FAILURE);
         }
+        cout << "[INFO] GLFW initialized successfully" << endl;
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+        glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
+        cout << "[INFO] Creating GLFW window with OpenGL 4.1..." << endl;
         window = glfwCreateWindow(WIDTH, HEIGHT, "Black Hole", nullptr, nullptr);
         if (!window) {
-            cerr << "Failed to create GLFW window\n";
+            cerr << "[ERROR] Failed to create GLFW window" << endl;
             glfwTerminate();
             exit(EXIT_FAILURE);
         }
+        cout << "[INFO] GLFW window created successfully" << endl;
         glfwMakeContextCurrent(window);
+        cout << "[INFO] OpenGL context made current" << endl;
+        
         glewExperimental = GL_TRUE;
         GLenum glewErr = glewInit();
         if (glewErr != GLEW_OK) {
-            cerr << "Failed to initialize GLEW: "
+            cerr << "[ERROR] Failed to initialize GLEW: "
                 << (const char*)glewGetErrorString(glewErr)
-                << "\n";
+                << endl;
             glfwTerminate();
             exit(EXIT_FAILURE);
         }
-        cout << "OpenGL " << glGetString(GL_VERSION) << "\n";
+        cout << "[INFO] GLEW initialized successfully" << endl;
+        
+        cout << "[INFO] OpenGL " << glGetString(GL_VERSION) << endl;
+        cout << "[INFO] OpenGL Renderer: " << glGetString(GL_RENDERER) << endl;
+        cout << "[INFO] OpenGL Vendor: " << glGetString(GL_VENDOR) << endl;
+        
+        cout << "[INFO] Creating shader programs..." << endl;
         this->shaderProgram = CreateShaderProgram();
+        if (this->shaderProgram == 0) {
+            cerr << "[ERROR] Failed to create main shader program" << endl;
+            exit(EXIT_FAILURE);
+        }
+        cout << "[INFO] Main shader program created successfully" << endl;
+        
         gridShaderProgram = CreateShaderProgram("grid.vert", "grid.frag");
+        if (gridShaderProgram == 0) {
+            cerr << "[ERROR] Failed to create grid shader program" << endl;
+            exit(EXIT_FAILURE);
+        }
+        cout << "[INFO] Grid shader program created successfully" << endl;
 
+        cout << "[INFO] Creating object shader program..." << endl;
+        const char* objectVertSrc = R"(
+        #version 410 core
+        layout (location = 0) in vec3 aPos;
+        uniform mat4 model;
+        uniform mat4 viewProj;
+        void main() {
+            gl_Position = viewProj * model * vec4(aPos, 1.0);
+        }
+        )";
+        const char* objectFragSrc = R"(
+        #version 410 core
+        out vec4 FragColor;
+        uniform vec4 objColor;
+        void main() {
+            FragColor = objColor;
+        }
+        )";
+        objectShaderProgram = CreateShaderProgramFromSource(objectVertSrc, objectFragSrc);
+        if (objectShaderProgram == 0) {
+            cerr << "[ERROR] Failed to create object shader program" << endl;
+            exit(EXIT_FAILURE);
+        }
+        cout << "[INFO] Object shader program created successfully" << endl;
+
+        cout << "[INFO] Creating compute program..." << endl;
         computeProgram = CreateComputeProgram("geodesic.comp");
+        if (computeProgram == 0) {
+            cout << "[WARNING] Compute shaders not supported, using fallback rendering" << endl;
+        } else {
+            cout << "[INFO] Compute program created successfully" << endl;
+        }
+        cout << "[INFO] Creating uniform buffers..." << endl;
         glGenBuffers(1, &cameraUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
-        glBufferData(GL_UNIFORM_BUFFER, 128, nullptr, GL_DYNAMIC_DRAW); // alloc ~128 bytes
-        glBindBufferBase(GL_UNIFORM_BUFFER, 1, cameraUBO); // binding = 1 matches shader
+        glBufferData(GL_UNIFORM_BUFFER, 128, nullptr, GL_DYNAMIC_DRAW);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 1, cameraUBO);
+        cout << "[INFO] Camera UBO created" << endl;
 
         glGenBuffers(1, &diskUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, diskUBO);
-        glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 4, nullptr, GL_DYNAMIC_DRAW); // 3 values + 1 padding
-        glBindBufferBase(GL_UNIFORM_BUFFER, 2, diskUBO); // binding = 2 matches compute shader
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 4, nullptr, GL_DYNAMIC_DRAW);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 2, diskUBO);
+        cout << "[INFO] Disk UBO created" << endl;
 
         glGenBuffers(1, &objectsUBO);
         glBindBuffer(GL_UNIFORM_BUFFER, objectsUBO);
-        // allocate space for 16 objects: 
-        // sizeof(int) + padding + 16×(vec4 posRadius + vec4 color)
         GLsizeiptr objUBOSize = sizeof(int) + 3 * sizeof(float)
             + 16 * (sizeof(vec4) + sizeof(vec4))
-            + 16 * sizeof(float); // 16 floats for mass
+            + 16 * sizeof(float);
         glBufferData(GL_UNIFORM_BUFFER, objUBOSize, nullptr, GL_DYNAMIC_DRAW);
-        glBindBufferBase(GL_UNIFORM_BUFFER, 3, objectsUBO);  // binding = 3 matches shader
+        glBindBufferBase(GL_UNIFORM_BUFFER, 3, objectsUBO);
+        cout << "[INFO] Objects UBO created" << endl;
 
+        cout << "[INFO] Creating quad VAO and texture..." << endl;
         auto result = QuadVAO();
         this->quadVAO = result[0];
         this->texture = result[1];
+        cout << "[INFO] Quad VAO and texture created successfully" << endl;
+
+        cout << "[INFO] Creating sphere mesh..." << endl;
+        createSphere();
+        cout << "[INFO] Sphere mesh created" << endl;
+        
+        cout << "[INFO] Black Hole Engine initialization complete!" << endl;
     }
     void generateGrid(const vector<ObjectData>& objects) {
         const int gridSize = 25;
@@ -240,7 +311,7 @@ struct Engine {
 
                 float y = 0.0f;
 
-                // ✅ Warp grid using Schwarzschild geometry
+                // Warp grid using Schwarzschild geometry
                 for (const auto& obj : objects) {
                     vec3 objPos = vec3(obj.posRadius);
                     double mass = obj.mass;
@@ -256,7 +327,7 @@ struct Engine {
                         double deltaY = 2.0 * sqrt(r_s * (dist - r_s));
                         y += static_cast<float>(deltaY) - 3e10f;
                     } else {
-                        // 🔴 For points inside or at r_s: make it dip down sharply
+                        // For points inside or at r_s: make it dip down sharply
                         y += 2.0f * static_cast<float>(sqrt(r_s * r_s)) - 3e10f;  // or add a deep pit
                     }
                 }
@@ -265,7 +336,7 @@ struct Engine {
             }
         }
 
-        // 🧩 Add indices for GL_LINE rendering
+        // Add indices for GL_LINE rendering
         for (int z = 0; z < gridSize; ++z) {
             for (int x = 0; x < gridSize; ++x) {
                 int i = z * (gridSize + 1) + x;
@@ -277,7 +348,7 @@ struct Engine {
             }
         }
 
-        // 🔌 Upload to GPU
+        // Upload to GPU
         if (gridVAO == 0) glGenVertexArrays(1, &gridVAO);
         if (gridVBO == 0) glGenBuffers(1, &gridVBO);
         if (gridEBO == 0) glGenBuffers(1, &gridEBO);
@@ -418,6 +489,11 @@ struct Engine {
         return program;
     }
     GLuint CreateComputeProgram(const char* path) {
+        if (!GLEW_ARB_compute_shader) {
+            cout << "[WARNING] Compute shaders not supported (requires OpenGL 4.3+). Using fallback rendering." << endl;
+            return 0;
+        }
+
         // 1) read GLSL source
         std::ifstream in(path);
         if(!in.is_open()) {
@@ -440,8 +516,9 @@ struct Engine {
             glGetShaderiv(cs, GL_INFO_LOG_LENGTH, &logLen);
             std::vector<char> log(logLen);
             glGetShaderInfoLog(cs, logLen, nullptr, log.data());
-            std::cerr << "Compute shader compile error:\n" << log.data() << "\n";
-            exit(EXIT_FAILURE);
+            cerr << "[ERROR] Compute shader compile error:\n" << log.data() << endl;
+            glDeleteShader(cs);
+            return 0;
         }
 
         // 3) link
@@ -454,14 +531,170 @@ struct Engine {
             glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &logLen);
             std::vector<char> log(logLen);
             glGetProgramInfoLog(prog, logLen, nullptr, log.data());
-            std::cerr << "Compute shader link error:\n" << log.data() << "\n";
-            exit(EXIT_FAILURE);
+            cerr << "[ERROR] Compute shader link error:\n" << log.data() << endl;
+            glDeleteShader(cs);
+            glDeleteProgram(prog);
+            return 0;
         }
 
         glDeleteShader(cs);
         return prog;
     }
+
+    GLuint CreateShaderProgramFromSource(const char* vertSrc, const char* fragSrc) {
+        GLuint vs = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(vs, 1, &vertSrc, nullptr);
+        glCompileShader(vs);
+        GLint ok;
+        glGetShaderiv(vs, GL_COMPILE_STATUS, &ok);
+        if(!ok) {
+            GLint logLen;
+            glGetShaderiv(vs, GL_INFO_LOG_LENGTH, &logLen);
+            vector<char> log(logLen);
+            glGetShaderInfoLog(vs, logLen, nullptr, log.data());
+            cerr << "[ERROR] Vertex shader compile error:\n" << log.data() << endl;
+            return 0;
+        }
+
+        GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(fs, 1, &fragSrc, nullptr);
+        glCompileShader(fs);
+        glGetShaderiv(fs, GL_COMPILE_STATUS, &ok);
+        if(!ok) {
+            GLint logLen;
+            glGetShaderiv(fs, GL_INFO_LOG_LENGTH, &logLen);
+            vector<char> log(logLen);
+            glGetShaderInfoLog(fs, logLen, nullptr, log.data());
+            cerr << "[ERROR] Fragment shader compile error:\n" << log.data() << endl;
+            return 0;
+        }
+
+        GLuint prog = glCreateProgram();
+        glAttachShader(prog, vs);
+        glAttachShader(prog, fs);
+        glLinkProgram(prog);
+        glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+        if(!ok) {
+            GLint logLen;
+            glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &logLen);
+            vector<char> log(logLen);
+            glGetProgramInfoLog(prog, logLen, nullptr, log.data());
+            cerr << "[ERROR] Shader link error:\n" << log.data() << endl;
+            return 0;
+        }
+
+        glDeleteShader(vs);
+        glDeleteShader(fs);
+        return prog;
+    }
+
+    void createSphere() {
+        vector<vec3> vertices;
+        vector<GLuint> indices;
+        int stackCount = 20;
+        int sectorCount = 20;
+        float radius = 1.0f;
+
+        for (int i = 0; i <= stackCount; ++i) {
+            float stackAngle = M_PI / 2 - i * M_PI / stackCount;
+            float xy = radius * cosf(stackAngle);
+            float z = radius * sinf(stackAngle);
+            for (int j = 0; j <= sectorCount; ++j) {
+                float sectorAngle = j * 2 * M_PI / sectorCount;
+                float x = xy * cosf(sectorAngle);
+                float y = xy * sinf(sectorAngle);
+                vertices.push_back(vec3(x, y, z));
+            }
+        }
+
+        for(int i = 0; i < stackCount; ++i) {
+            int k1 = i * (sectorCount + 1);
+            int k2 = k1 + sectorCount + 1;
+            for(int j = 0; j < sectorCount; ++j, ++k1, ++k2) {
+                if (i != 0) {
+                    indices.push_back(k1);
+                    indices.push_back(k2);
+                    indices.push_back(k1 + 1);
+                }
+                if (i != (stackCount-1)) {
+                    indices.push_back(k1 + 1);
+                    indices.push_back(k2);
+                    indices.push_back(k2 + 1);
+                }
+            }
+        }
+        sphereIndexCount = indices.size();
+
+        glGenVertexArrays(1, &sphereVAO);
+        glBindVertexArray(sphereVAO);
+        GLuint vbo, ebo;
+        glGenBuffers(1, &vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(vec3), vertices.data(), GL_STATIC_DRAW);
+        
+        glGenBuffers(1, &ebo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint), indices.data(), GL_STATIC_DRAW);
+
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vec3), (void*)0);
+        glEnableVertexAttribArray(0);
+    }
+
+    void drawObjects(mat4 viewProj, const vector<ObjectData>& objs) {
+        glUseProgram(objectShaderProgram);
+        glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "viewProj"), 1, GL_FALSE, value_ptr(viewProj));
+        glBindVertexArray(sphereVAO);
+        for (const auto& obj : objs) {
+            mat4 model = mat4(1.0f);
+            model = translate(model, vec3(obj.posRadius));
+            model = scale(model, vec3(obj.posRadius.w));
+            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "model"), 1, GL_FALSE, value_ptr(model));
+            glUniform4fv(glGetUniformLocation(objectShaderProgram, "objColor"), 1, value_ptr(obj.color));
+            glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0);
+        }
+    }
+
     void dispatchCompute(const Camera& cam) {
+        // Check if compute shaders are supported
+        if (!computeProgram) {
+            // Fallback: create a simple colored texture
+            glBindTexture(GL_TEXTURE_2D, texture);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 200, 150, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            
+            // Create a more interesting fallback pattern
+            std::vector<unsigned char> fallbackData(200 * 150 * 4, 0);
+            for (int i = 0; i < 200 * 150; ++i) {
+                int x = i % 200;
+                int y = i / 200;
+                
+                // Black hole in center
+                float distFromCenter = sqrt((x - 100) * (x - 100) + (y - 75) * (y - 75));
+                if (distFromCenter < 20) {
+                    fallbackData[i * 4 + 0] = 255;  // Red (black hole)
+                    fallbackData[i * 4 + 1] = 0;
+                    fallbackData[i * 4 + 2] = 0;
+                } else if (distFromCenter < 40) {
+                    fallbackData[i * 4 + 0] = 255;  // Orange (accretion disk)
+                    fallbackData[i * 4 + 1] = 165;
+                    fallbackData[i * 4 + 2] = 0;
+                } else {
+                    // Stars and background
+                    if (x % 50 == 0 || y % 50 == 0) {
+                        fallbackData[i * 4 + 0] = 255;  // White stars
+                        fallbackData[i * 4 + 1] = 255;
+                        fallbackData[i * 4 + 2] = 255;
+                    } else {
+                        fallbackData[i * 4 + 0] = 20;   // Dark blue background
+                        fallbackData[i * 4 + 1] = 20;
+                        fallbackData[i * 4 + 2] = 100;
+                    }
+                }
+                fallbackData[i * 4 + 3] = 255;  // A
+            }
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 200, 150, GL_RGBA, GL_UNSIGNED_BYTE, fallbackData.data());
+            return;
+        }
+        
         // determine target compute‐res
         int cw = cam.moving ? COMPUTE_WIDTH  : 200;
         int ch = cam.moving ? COMPUTE_HEIGHT : 150;
@@ -638,7 +871,11 @@ void setupCameraCallbacks(GLFWwindow* window) {
 
 // -- MAIN -- //
 int main() {
+    cout << "[INFO] Starting Black Hole 3D Simulation..." << endl;
+    cout << "[INFO] Setting up camera callbacks..." << endl;
     setupCameraCallbacks(engine.window);
+    cout << "[INFO] Camera callbacks setup complete" << endl;
+    
     vector<unsigned char> pixels(engine.WIDTH * engine.HEIGHT * 3);
 
     auto t0 = Clock::now();
@@ -646,7 +883,15 @@ int main() {
 
     double lastTime = glfwGetTime();
     int   renderW  = 800, renderH = 600, numSteps = 80000;
+    
+    cout << "[INFO] Entering main render loop..." << endl;
+    int frameCount = 0;
     while (!glfwWindowShouldClose(engine.window)) {
+        frameCount++;
+        if (frameCount % 60 == 0) {
+            cout << "[INFO] Frame " << frameCount << " - Camera pos: (" 
+                 << camera.position().x << ", " << camera.position().y << ", " << camera.position().z << ")" << endl;
+        }
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // optional, but good practice
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -654,6 +899,22 @@ int main() {
         double dt    = now - lastTime;   // seconds since last frame
         lastTime     = now;
 
+        mat4 view = lookAt(camera.position(), camera.target, vec3(0,1,0));
+        mat4 proj = perspective(radians(60.0f), float(engine.WIDTH)/float(engine.HEIGHT), 1e9f, 1e14f);
+        mat4 viewProj = proj * view;
+
+        if(engine.computeProgram) {
+            // ---------- RUN RAYTRACER ------------- //
+            glViewport(0, 0, engine.WIDTH, engine.HEIGHT);
+            engine.dispatchCompute(camera);
+            engine.drawFullScreenQuad();
+        } else {
+            // Fallback 3D rendering
+            engine.generateGrid(objects);
+            engine.drawGrid(viewProj);
+            engine.drawObjects(viewProj, objects);
+        }
+        
         // Gravity
         for (auto& obj : objects) {
             for (auto& obj2 : objects) {
@@ -687,24 +948,26 @@ int main() {
 
         // ---------- GRID ------------- //
         // 2) rebuild grid mesh on CPU
-        engine.generateGrid(objects);
+        //engine.generateGrid(objects);
         // 5) overlay the bent grid
-        mat4 view = lookAt(camera.position(), camera.target, vec3(0,1,0));
-        mat4 proj = perspective(radians(60.0f), float(engine.COMPUTE_WIDTH)/engine.COMPUTE_HEIGHT, 1e9f, 1e14f);
-        mat4 viewProj = proj * view;
-        engine.drawGrid(viewProj);
+        //mat4 view = lookAt(camera.position(), camera.target, vec3(0,1,0));
+        //mat4 proj = perspective(radians(60.0f), float(engine.COMPUTE_WIDTH)/engine.COMPUTE_HEIGHT, 1e9f, 1e14f);
+        //mat4 viewProj = proj * view;
+        //engine.drawGrid(viewProj);
 
         // ---------- RUN RAYTRACER ------------- //
-        glViewport(0, 0, engine.WIDTH, engine.HEIGHT);
-        engine.dispatchCompute(camera);
-        engine.drawFullScreenQuad();
+        //glViewport(0, 0, engine.WIDTH, engine.HEIGHT);
+        //engine.dispatchCompute(camera);
+        //engine.drawFullScreenQuad();
 
         // 6) present to screen
         glfwSwapBuffers(engine.window);
         glfwPollEvents();
     }
 
+    cout << "[INFO] Render loop ended. Cleaning up..." << endl;
     glfwDestroyWindow(engine.window);
     glfwTerminate();
+    cout << "[INFO] Black Hole 3D Simulation terminated successfully" << endl;
     return 0;
 }
