@@ -38,6 +38,12 @@ struct Engine {
             cerr << "Failed to initialize GLFW" << endl;
             exit(EXIT_FAILURE);
         }
+        
+        // Request OpenGL compatibility profile
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_ANY_PROFILE);
+        
         window = glfwCreateWindow(WIDTH, HEIGHT, "Black Hole Simulation", NULL, NULL);
         if (!window) {
             cerr << "Failed to create GLFW window" << endl;
@@ -52,7 +58,7 @@ struct Engine {
             glfwTerminate();
             exit(EXIT_FAILURE);
         }
-        glViewport(0, 0, WIDTH, HEIGHT);;
+        glViewport(0, 0, WIDTH, HEIGHT);
     }
 
     void run() {
@@ -213,7 +219,13 @@ void rk4Step(Ray& ray, double dλ, double rs) {
 
 
 int main () {
-    //rays.push_back(Ray(vec2(-1e11, 3.27606302719999999e10), vec2(c, 0.0f)));
+    std::cout << "Starting Black Hole Simulation..." << std::endl;
+    std::cout << "Window created successfully" << std::endl;
+    
+    // Add a test ray
+    rays.push_back(Ray(vec2(-1e11, 3.27606302719999999e10), vec2(c, 0.0f)));
+    std::cout << "Added test ray" << std::endl;
+    
     while(!glfwWindowShouldClose(engine.window)) {
         engine.run();
         SagA.draw();
@@ -227,5 +239,6 @@ int main () {
         glfwPollEvents();
     }
 
+    std::cout << "Simulation ended" << std::endl;
     return 0;
 }

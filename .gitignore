@@ -1,0 +1,19 @@
+# Build directory
+build/
+
+# Vcpkg installation and source
+vcpkg/
+vcpkg_installed/
+
+# Project files
+Gravity_Sim.zip
+
+# IDE files
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

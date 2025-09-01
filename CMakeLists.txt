@@ -16,11 +16,18 @@ set(DEPS glfw GLEW::GLEW glm::glm)
 add_executable(BlackHole2D 2D_lensing.cpp)
 target_link_libraries(BlackHole2D PRIVATE ${DEPS})
 target_include_directories(BlackHole2D PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(BlackHole2D PRIVATE GLFW_COCOA_GL_LOADER)
+target_compile_options(BlackHole2D PRIVATE -Wno-deprecated-declarations)
 
 # 3D Black Hole executable
 add_executable(BlackHole3D black_hole.cpp)
 target_link_libraries(BlackHole3D PRIVATE ${DEPS})
 target_include_directories(BlackHole3D PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Simple Lensing executable (OpenGL 4.1 compatible)
+# add_executable(SimpleLensing simple_lensing.cpp)
+# target_link_libraries(SimpleLensing PRIVATE ${DEPS})
+# target_include_directories(SimpleLensing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Shader files (copy to output dir)
 file(GLOB SHADERS
