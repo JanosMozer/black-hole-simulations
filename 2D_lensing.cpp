@@ -18,6 +18,7 @@ double G = 6.67430e-11;
 
 struct Ray;
 void rk4Step(Ray& ray, double dλ, double rs);
+void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 
 // --- Structs --- //
 struct Engine {
@@ -51,6 +52,8 @@ struct Engine {
             exit(EXIT_FAILURE);
         }
         glfwMakeContextCurrent(window);
+        glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+
         glewExperimental = GL_TRUE;
         if (glewInit() != GLEW_OK) {
             cerr << "Failed to initialize GLEW" << endl;
@@ -58,23 +61,40 @@ struct Engine {
             glfwTerminate();
             exit(EXIT_FAILURE);
         }
-        glViewport(0, 0, WIDTH, HEIGHT);
+        
+        // Set initial viewport size correctly, especially for Retina displays
+        int fb_width, fb_height;
+        glfwGetFramebufferSize(window, &fb_width, &fb_height);
+        glViewport(0, 0, fb_width, fb_height);
     }
 
     void run() {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
+
+        int win_width, win_height;
+        glfwGetWindowSize(window, &win_width, &win_height);
+        float aspect_ratio = (win_height > 0) ? (float)win_width / (float)win_height : 1.0f;
+        
+        // Adjust world height based on aspect ratio to prevent distortion
+        double world_view_height = width / aspect_ratio;
+
         double left   = -width + offsetX;
         double right  =  width + offsetX;
-        double bottom = -height + offsetY;
-        double top    =  height + offsetY;
+        double bottom = -world_view_height + offsetY;
+        double top    =  world_view_height + offsetY;
         glOrtho(left, right, bottom, top, -1.0, 1.0);
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
     }
 };
 Engine engine;
+
+void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
+    glViewport(0, 0, width, height);
+}
+
 struct BlackHole {
     vec3 position;
     double mass;
@@ -222,17 +242,35 @@ int main () {
     std::cout << "Starting Black Hole Simulation..." << std::endl;
     std::cout << "Window created successfully" << std::endl;
     
-    // Add a test ray
-    rays.push_back(Ray(vec2(-1e11, 3.27606302719999999e10), vec2(c, 0.0f)));
-    std::cout << "Added test ray" << std::endl;
+    int num_rays = 20;
+    float start_x = -engine.width; 
+
+    int win_width, win_height;
+    glfwGetWindowSize(engine.window, &win_width, &win_height);
+    float aspect_ratio = (win_height > 0) ? (float)win_width / (float)win_height : 1.0f;
+    double world_view_height = engine.width / aspect_ratio;
+
+    float total_height = 2.0f * world_view_height; // Span the full vertical view
+    float y_spacing = (num_rays > 1) ? total_height / (num_rays - 1) : 0;
+
+    for (int i = 0; i < num_rays; ++i) {
+        float y_pos = (num_rays > 1) ? -total_height / 2.0f + i * y_spacing : 0;
+        rays.push_back(Ray(vec2(start_x, y_pos), vec2(c, 0.0f)));
+    }
+    std::cout << "Added " << num_rays << " parallel rays." << std::endl;
     
     while(!glfwWindowShouldClose(engine.window)) {
         engine.run();
         SagA.draw();
 
+        // Update all ray positions
         for (auto& ray : rays) {
             ray.step(1.0f, SagA.r_s);
-            ray.draw(rays);
+        }
+
+        // Draw all rays and trails
+        if (!rays.empty()) {
+            rays[0].draw(rays);
         }
 
         glfwSwapBuffers(engine.window);
