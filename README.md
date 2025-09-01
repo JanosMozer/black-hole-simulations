@@ -4,16 +4,14 @@ This project provides C++ simulations of gravitational lensing and black hole vi
 
 ## Features
 
-*   **3D Black Hole Simulation (`BlackHole3D`)**:
-    *   **Primary Visualization (Compute Shader)**: An advanced ray-tracing simulation of gravitational lensing around a black hole. This is the intended visualization but requires OpenGL 4.3+.
-    *   **Fallback 3D Visualization**: For systems that do not support compute shaders (like macOS), a fallback renderer is used. This displays a 3D scene with the central black hole, nearby stars, and a grid that visually deforms to represent the curvature of spacetime. The camera is fully interactive.
-    *   **Physics**: Simulates the gravitational attraction between celestial bodies.
+*   **3D Black Hole Simulation**:
+    *   **Primary Visualization**: An advanced ray-tracing simulation of gravitational lensing around a black hole. This is the intended visualization but requires OpenGL 4.3+.
+    *   **Fallback 3D Visualization**: For systems that do not support compute shaders, a fallback renderer is used. Rays are sent out of the camera, physics is applied, and if a ray would intersect an object before exiting the simulation, than that pixel gets colored with the objects color.
 
-*   **2D Lensing Simulation (`BlackHole2D`)**:
+*   **2D Lensing Simulation**:
     *   A simplified 2D visualization of gravitational lensing effects.
     *   Note: This simulation uses deprecated OpenGL functions and may not work correctly on modern OpenGL core profiles.
 
-## macOS Compatibility Notice
 
 This project has known compatibility issues on macOS systems. The primary 3D visualization relies on OpenGL compute shaders, which require **OpenGL 4.3** or higher. macOS officially supports up to **OpenGL 4.1**.
 
@@ -75,4 +73,4 @@ The executables will be located in the `build` directory.
 
 ## Acknowledgements
 
-Special thanks to **kavan010**, from whom I copied the OpenGL configurations that helped get this project running.
+Special thanks to **kavan010**, who's work I used for OpenGL configurations that helped get this project running.

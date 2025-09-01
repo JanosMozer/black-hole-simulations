@@ -18,14 +18,14 @@ find_package(glm CONFIG REQUIRED)
 set(DEPS glfw GLEW::GLEW glm::glm)
 
 # 2D Lensing executable
-add_executable(BlackHole2D 2D_lensing.cpp)
+add_executable(BlackHole2D 2D_simulation.cpp)
 target_link_libraries(BlackHole2D PRIVATE ${DEPS})
 target_include_directories(BlackHole2D PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(BlackHole2D PRIVATE GLFW_COCOA_GL_LOADER)
 target_compile_options(BlackHole2D PRIVATE -Wno-deprecated-declarations)
 
 # 3D Black Hole executable
-add_executable(BlackHole3D black_hole.cpp)
+add_executable(BlackHole3D black_hole_object.cpp)
 target_link_libraries(BlackHole3D PRIVATE ${DEPS})
 #if(OpenMP_FOUND)
 #    target_link_libraries(BlackHole3D PRIVATE OpenMP::OpenMP_CXX)
